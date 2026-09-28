@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: computemesh-postgres
+    restart: unless-stopped
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-computemesh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-computemesh_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-computemesh}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-computemesh}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: computemesh-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    command: redis-server --appendonly yes
+
+  object-storage:
+    image: chrislusf/seaweedfs:latest
+    container_name: computemesh-object-storage
+    restart: unless-stopped
+    ports:
+      - '8333:8333'
+      - '9333:9333'
+    volumes:
+      - object-storage-data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8333/']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: server -dir=/data -s3
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  object-storage-data:
+    driver: local

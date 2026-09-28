@@ -1,0 +1,27 @@
+{
+  "name": "@computemesh/worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "jest --passWithNoTests",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@computemesh/config": "workspace:*",
+    "@computemesh/logger": "workspace:*",
+    "ioredis": "^5.4.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.0",
+    "@types/jest": "^29.5.0",
+    "rimraf": "^6.0.0"
+  }
+}
