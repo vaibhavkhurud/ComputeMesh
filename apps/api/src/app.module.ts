@@ -12,6 +12,7 @@ import { AgentsModule } from './agents/agents.module';
 import { JobsModule } from './jobs/jobs.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { AgentExecutionModule } from './agent-execution/agent-execution.module';
+import { CheckpointsModule } from './checkpoints/checkpoints.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AgentExecutionModule } from './agent-execution/agent-execution.module';
     JobsModule,
     SchedulerModule,
     AgentExecutionModule,
+    CheckpointsModule,
   ],
   providers: [
     redisProvider,

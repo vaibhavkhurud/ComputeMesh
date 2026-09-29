@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 )
@@ -39,7 +39,7 @@ func (d *DockerExecutor) Execute(ctx context.Context, cfg ExecutionConfig) (stri
 		return "", fmt.Errorf("security violation: image must be immutable digest pinned: %s", cfg.Image)
 	}
 
-	_, err := d.client.ImagePull(ctx, cfg.Image, types.ImagePullOptions{})
+	_, err := d.client.ImagePull(ctx, cfg.Image, image.PullOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to pull image: %w", err)
 	}
@@ -79,7 +79,7 @@ func (d *DockerExecutor) Execute(ctx context.Context, cfg ExecutionConfig) (stri
 		return "", fmt.Errorf("failed to create container: %w", err)
 	}
 
-	if err := d.client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return resp.ID, fmt.Errorf("failed to start container: %w", err)
 	}
 

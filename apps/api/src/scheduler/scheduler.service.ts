@@ -1,17 +1,139 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { getDatabaseClient } from '@computemesh/database';
 
 @Injectable()
-export class SchedulerService {
+export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private db = getDatabaseClient();
+  private sweepTimer!: NodeJS.Timeout;
 
   constructor(@Inject('LOGGER') private readonly logger: any) {}
+
+  onModuleInit() {
+    this.sweepTimer = setInterval(() => this.sweepExpiredLeases(), 60000);
+  }
+
+  onModuleDestroy() {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+  }
+
+  async sweepExpiredLeases() {
+    this.logger.info('Sweeping expired leases...');
+    
+    // 1. Safe scan without locking
+    const expired = await this.db.$queryRaw<{id: string, jobId: string, assignmentId: string}[]>`
+      SELECT id, "jobId", "assignmentId" FROM "execution_leases" 
+      WHERE status = 'ACTIVE' AND "expiresAt" <= NOW()
+    `;
+
+    if (!expired.length) return;
+
+    this.logger.info(`Found ${expired.length} expired leases`);
+
+    for (const lease of expired) {
+      const didRecover = await this.db.$transaction(async (tx) => {
+        // Safe lookup done above. Lock top-down.
+        // Lock Job
+        const jobs = await tx.$queryRaw<{status: string, recoveryAttempts: number}[]>`
+          SELECT status, "recoveryAttempts" FROM jobs WHERE id = ${lease.jobId} FOR UPDATE
+        `;
+        if (!jobs.length) return;
+        const job = jobs[0];
+
+        // Lock JobAssignment
+        const assignments = await tx.$queryRaw<{status: string}[]>`
+          SELECT status FROM job_assignments WHERE id = ${lease.assignmentId} FOR UPDATE
+        `;
+        if (!assignments.length) return;
+
+        // Lock ExecutionLease
+        const leases = await tx.$queryRaw<{status: string}[]>`
+          SELECT status FROM execution_leases WHERE id = ${lease.id} FOR UPDATE
+        `;
+        if (!leases.length || leases[0].status !== 'ACTIVE') return;
+
+        // Perform M10 Recovery transition
+        await tx.$executeRaw`
+          UPDATE execution_leases SET status = 'EXPIRED', "updatedAt" = NOW() WHERE id = ${lease.id}
+        `;
+        
+        await tx.$executeRaw`
+          UPDATE job_assignments SET status = 'RELEASED', "releasedAt" = NOW(), "failureReason" = 'PROVIDER_FAILURE' WHERE id = ${lease.assignmentId}
+        `;
+
+        const newAttempts = job.recoveryAttempts + 1;
+        await tx.$executeRaw`
+          UPDATE jobs SET "recoveryAttempts" = ${newAttempts} WHERE id = ${lease.jobId}
+        `;
+
+        await tx.jobEvent.create({
+          data: {
+            jobId: lease.jobId,
+            eventType: 'PROVIDER_FAILURE_DETECTED',
+            toStatus: 'INTERRUPTED',
+            actorType: 'SYSTEM',
+            actorId: 'scheduler',
+            metadata: { assignmentId: lease.assignmentId, attempt: newAttempts }
+          }
+        });
+
+        // Determine if recovery is possible
+        const checkpoints = await tx.$queryRaw<{id: string, sequence: number}[]>`
+          SELECT id, sequence FROM checkpoints WHERE "jobId" = ${lease.jobId} AND status = 'VERIFIED' ORDER BY sequence DESC LIMIT 1
+        `;
+
+        let nextStatus = 'FAILED';
+        let willRecover = false;
+        if (newAttempts < 3 && checkpoints.length > 0) {
+          nextStatus = 'INTERRUPTED';
+          willRecover = true;
+        }
+
+        await tx.job.update({
+          where: { id: lease.jobId },
+          data: { status: nextStatus as any }
+        });
+
+        await tx.jobEvent.create({
+          data: {
+            jobId: lease.jobId,
+            eventType: 'RECOVERY_STARTED',
+            toStatus: nextStatus as any,
+            actorType: 'SYSTEM',
+            actorId: 'scheduler',
+            metadata: { checkpointId: checkpoints.length > 0 ? checkpoints[0].id : null, attempt: newAttempts }
+          }
+        });
+
+        if (nextStatus === 'FAILED') {
+          await tx.jobEvent.create({
+            data: {
+              jobId: lease.jobId,
+              eventType: 'STATUS_CHANGED',
+              fromStatus: 'INTERRUPTED',
+              toStatus: nextStatus as any,
+              actorType: 'SYSTEM',
+              actorId: 'scheduler',
+              metadata: { message: 'Recovery exhausted or impossible' }
+            }
+          });
+        }
+
+        // Return a flag to schedule after transaction
+        return willRecover;
+      });
+
+      if (didRecover) {
+        // Kick off scheduling asynchronously
+        this.scheduleJob(lease.jobId).catch(err => this.logger.error(`Recovery schedule error: ${err.message}`));
+      }
+    }
+  }
 
   async scheduleJob(jobId: string) {
     // 1. ATOMIC CLAIM (Phase 1)
     const claimed = await this.db.$transaction(async (tx) => {
       const updated = await tx.job.updateMany({
-        where: { id: jobId, status: 'QUEUED' },
+        where: { id: jobId, status: { in: ['QUEUED', 'INTERRUPTED'] } },
         data: { status: 'SCHEDULING', updatedAt: new Date() }
       });
       if (updated.count === 1) {
@@ -19,7 +141,6 @@ export class SchedulerService {
           data: {
             jobId,
             eventType: 'STATUS_CHANGED',
-            fromStatus: 'QUEUED',
             toStatus: 'SCHEDULING',
             actorType: 'SYSTEM',
             actorId: 'scheduler',
@@ -37,6 +158,18 @@ export class SchedulerService {
 
     try {
       // 2. DISCOVERY & MATCHING (Phase 2)
+      // Get excluded providers from JobEvents
+      const failEvents = await this.db.jobEvent.findMany({
+        where: { jobId, eventType: 'PROVIDER_FAILURE_DETECTED' }
+      });
+      const failedAssignments = failEvents.map(e => (e.metadata as any)?.assignmentId).filter(Boolean);
+      let excludedProviderIds: string[] = [];
+      if (failedAssignments.length > 0) {
+        const assignments = await this.db.jobAssignment.findMany({
+          where: { id: { in: failedAssignments } }
+        });
+        excludedProviderIds = assignments.map(a => a.providerId);
+      }
       // Query authoritative PostgreSQL db for machines
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
       
@@ -53,6 +186,7 @@ export class SchedulerService {
       const allCandidates = await this.db.machine.findMany({
         where: {
           status: 'REGISTERED',
+          providerId: { notIn: excludedProviderIds },
           provider: { status: 'ACTIVE' },
           agentIdentity: {
             status: 'ACTIVE',

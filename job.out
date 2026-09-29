@@ -1,0 +1,31 @@
+Job created res: {
+  id: 'b5efcf34-1d81-45c0-97f7-3f11dd6a7397',
+  userId: '7fe0e681-d83c-444d-ac5c-93599c840a72',
+  name: 'Test Job',
+  status: 'QUEUED',
+  inputBucket: 'computemesh-jobs',
+  inputKey: null,
+  inputSize: null,
+  createdAt: '2026-09-28T17:01:41.566Z',
+  updatedAt: '2026-09-28T17:01:41.566Z',
+  queuedAt: '2026-09-28T17:01:41.565Z',
+  cancelledAt: null,
+  completedAt: null,
+  requirement: {
+    id: '6928824f-caa5-4944-8055-3acf3071af13',
+    jobId: 'b5efcf34-1d81-45c0-97f7-3f11dd6a7397',
+    cpuCoresMin: 1,
+    memoryMbMin: 512,
+    gpuRequired: false,
+    gpuCount: null,
+    gpuModel: null,
+    gpuMemoryMbMin: null,
+    cudaVersion: null,
+    architecture: null,
+    operatingSystem: null,
+    region: null,
+    createdAt: '2026-09-28T17:01:41.566Z',
+    updatedAt: '2026-09-28T17:01:41.566Z'
+  }
+}
+Job ID: b5efcf34-1d81-45c0-97f7-3f11dd6a7397 Admin Email: admin-1790614901585@example.com

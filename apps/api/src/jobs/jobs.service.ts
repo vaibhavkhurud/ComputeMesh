@@ -176,7 +176,7 @@ export class JobsService {
         throw new BadRequestException('Job could not be cancelled. It may have already transitioned.');
       }
 
-      // 3. Update
+      // 3. Update job status
       await tx.job.update({
         where: { id: jobId },
         data: { 
@@ -185,6 +185,26 @@ export class JobsService {
           updatedAt: new Date()
         }
       });
+
+      // Branch based on currentStatus for atomic revocation
+      if (currentStatus === 'ASSIGNED') {
+        await tx.$executeRaw`
+          UPDATE "job_assignments"
+          SET status = 'RELEASED', "releasedAt" = NOW(), "updatedAt" = NOW()
+          WHERE "jobId" = ${jobId} AND status = 'ACTIVE'
+        `;
+      } else if (currentStatus === 'STARTING' || currentStatus === 'RUNNING') {
+        await tx.$executeRaw`
+          UPDATE "job_assignments"
+          SET status = 'RELEASED', "releasedAt" = NOW(), "updatedAt" = NOW()
+          WHERE "jobId" = ${jobId} AND status = 'ACTIVE'
+        `;
+        await tx.$executeRaw`
+          UPDATE "execution_leases"
+          SET status = 'REVOKED', "updatedAt" = NOW()
+          WHERE "jobId" = ${jobId} AND status = 'ACTIVE'
+        `;
+      }
 
       // 4. Create event
       await tx.jobEvent.create({

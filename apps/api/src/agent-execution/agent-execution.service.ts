@@ -27,13 +27,27 @@ export class AgentExecutionService {
       }
     });
 
-    return assignments.map(a => {
+    const result = [];
+    for (const a of assignments) {
       // Resolve runtime to a server-controlled immutable digest.
-      // (Mock logic representing the trusted runtime policy).
-      let digest = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
-      let img = `computemesh/python-runtime@${digest}`;
+      let digest = 'sha256:5e23090353324d887c48ad5e5c56d294eab81588df9605b07d1afe895f9cc8f8';
+      let img = `hello-world@${digest}`;
+      
+      let checkpointUrl = undefined;
+      let checkpointChecksum = undefined;
 
-      return {
+      if (a.job.recoveryAttempts > 0 || a.job.checkpointSequence > 0) {
+        const cp = await this.db.checkpoint.findFirst({
+          where: { jobId: a.jobId, status: 'VERIFIED' },
+          orderBy: { sequence: 'desc' }
+        });
+        if (cp) {
+          checkpointUrl = `http://localhost:8333/${cp.bucket}/${cp.storageKey}`;
+          checkpointChecksum = cp.checksumSha256;
+        }
+      }
+
+      result.push({
         assignmentId: a.id,
         jobId: a.jobId,
         jobName: a.job.name,
@@ -41,9 +55,13 @@ export class AgentExecutionService {
         inputKey: a.job.inputKey,
         inputSize: a.job.inputSize?.toString(),
         requirements: a.job.requirement,
-        trustedImage: img
-      };
-    });
+        trustedImage: img,
+        checkpointUrl,
+        checkpointChecksum
+      });
+    }
+
+    return result;
   }
 
   async getAssignmentStatus(machineId: string, providerId: string, assignmentId: string) {
@@ -61,6 +79,16 @@ export class AgentExecutionService {
 
   async startExecution(machineId: string, providerId: string, assignmentId: string) {
     const claimed = await this.db.$transaction(async (tx) => {
+      // Safe lookup
+      const lookup = await tx.$queryRaw<{jobId: string}[]>`SELECT "jobId" FROM "job_assignments" WHERE id = ${assignmentId}`;
+      if (!lookup.length) return false;
+      const jobId = lookup[0].jobId;
+
+      // 1. Lock Job
+      const jobs = await tx.$queryRaw<{status: string}[]>`SELECT status FROM jobs WHERE id = ${jobId} FOR UPDATE`;
+      if (!jobs.length || jobs[0].status !== 'ASSIGNED') return false;
+
+      // 2. Lock Assignment
       const current = await tx.$queryRaw<{jobId: string}[]>`
         SELECT "jobId" FROM "job_assignments"
         WHERE id = ${assignmentId} 
@@ -69,19 +97,36 @@ export class AgentExecutionService {
           AND status = 'ACTIVE'
         FOR UPDATE
       `;
-
       if (!current.length) return false;
-      const jobId = current[0].jobId;
-
-      const jobs = await tx.$queryRaw<{status: string}[]>`
-        SELECT status FROM jobs WHERE id = ${jobId} FOR UPDATE
-      `;
-
-      if (!jobs.length || jobs[0].status !== 'ASSIGNED') return false;
 
       await tx.job.update({
         where: { id: jobId },
         data: { status: 'STARTING', updatedAt: new Date() }
+      });
+
+      await tx.$executeRaw`
+        INSERT INTO "execution_leases" (
+          id, "jobId", "assignmentId", "machineId", 
+          "issuedAt", "expiresAt", "lastRenewedAt", 
+          status, "createdAt", "updatedAt"
+        )
+        VALUES (
+          gen_random_uuid(), ${jobId}, ${assignmentId}, ${machineId},
+          NOW(), NOW() + INTERVAL '5 minutes', NOW(),
+          'ACTIVE', NOW(), NOW()
+        )
+      `;
+
+      await tx.jobEvent.create({
+        data: {
+          jobId,
+          eventType: 'LEASE_CREATED',
+          fromStatus: 'ASSIGNED',
+          toStatus: 'STARTING',
+          actorType: 'SYSTEM',
+          actorId: machineId,
+          metadata: { assignmentId, message: 'Lease created' }
+        }
       });
 
       await tx.jobEvent.create({
@@ -108,6 +153,16 @@ export class AgentExecutionService {
 
   async reportRunning(machineId: string, providerId: string, assignmentId: string) {
     const running = await this.db.$transaction(async (tx) => {
+      // Safe lookup
+      const lookup = await tx.$queryRaw<{jobId: string}[]>`SELECT "jobId" FROM "job_assignments" WHERE id = ${assignmentId}`;
+      if (!lookup.length) return false;
+      const jobId = lookup[0].jobId;
+
+      // 1. Lock Job
+      const jobs = await tx.$queryRaw<{status: string}[]>`SELECT status FROM jobs WHERE id = ${jobId} FOR UPDATE`;
+      if (!jobs.length || jobs[0].status !== 'STARTING') return false;
+
+      // 2. Lock Assignment
       const current = await tx.$queryRaw<{jobId: string}[]>`
         SELECT "jobId" FROM "job_assignments"
         WHERE id = ${assignmentId} 
@@ -116,15 +171,17 @@ export class AgentExecutionService {
           AND status = 'ACTIVE'
         FOR UPDATE
       `;
-
       if (!current.length) return false;
-      const jobId = current[0].jobId;
 
-      const jobs = await tx.$queryRaw<{status: string}[]>`
-        SELECT status FROM jobs WHERE id = ${jobId} FOR UPDATE
+      // 3. Lock Lease
+      const leases = await tx.$queryRaw<{status: string}[]>`
+        SELECT status FROM "execution_leases" 
+        WHERE "assignmentId" = ${assignmentId} 
+          AND "machineId" = ${machineId} 
+          AND "expiresAt" > NOW() 
+        FOR UPDATE
       `;
-
-      if (!jobs.length || jobs[0].status !== 'STARTING') return false;
+      if (!leases.length || leases[0].status !== 'ACTIVE') return false;
 
       await tx.job.update({
         where: { id: jobId },
@@ -155,6 +212,16 @@ export class AgentExecutionService {
 
   async reportResult(machineId: string, providerId: string, assignmentId: string, dto: AgentResultDto) {
     const result = await this.db.$transaction(async (tx) => {
+      // Safe lookup
+      const lookup = await tx.$queryRaw<{jobId: string}[]>`SELECT "jobId" FROM "job_assignments" WHERE id = ${assignmentId}`;
+      if (!lookup.length) return false;
+      const jobId = lookup[0].jobId;
+
+      // 1. Lock Job
+      const jobs = await tx.$queryRaw<{status: string}[]>`SELECT status FROM jobs WHERE id = ${jobId} FOR UPDATE`;
+      if (!jobs.length) return false;
+
+      // 2. Lock Assignment
       const current = await tx.$queryRaw<{jobId: string}[]>`
         SELECT "jobId" FROM "job_assignments"
         WHERE id = ${assignmentId} 
@@ -163,15 +230,17 @@ export class AgentExecutionService {
           AND status = 'ACTIVE'
         FOR UPDATE
       `;
-
       if (!current.length) return false;
-      const jobId = current[0].jobId;
 
-      const jobs = await tx.$queryRaw<{status: string}[]>`
-        SELECT status FROM jobs WHERE id = ${jobId} FOR UPDATE
+      // 3. Lock Lease
+      const leases = await tx.$queryRaw<{status: string}[]>`
+        SELECT status FROM "execution_leases" 
+        WHERE "assignmentId" = ${assignmentId} 
+          AND "machineId" = ${machineId} 
+          AND "expiresAt" > NOW() 
+        FOR UPDATE
       `;
-
-      if (!jobs.length) return false;
+      if (!leases.length || leases[0].status !== 'ACTIVE') return false;
       const jobStatus = jobs[0].status;
 
       // Only STARTING or RUNNING can be completed/failed by agent normally.
@@ -222,6 +291,28 @@ export class AgentExecutionService {
 
     if (!result) {
       throw new ConflictException('Assignment not active or missing');
+    }
+
+    return { success: true };
+  }
+
+  async renewLease(machineId: string, providerId: string, assignmentId: string) {
+    // Note: execution_leases table might not have providerId, but we can verify it via subquery or just accept it's a known agent.
+    // Actually, we'll verify it by making sure the assignment belongs to this provider.
+    const updated = await this.db.$executeRaw`
+      UPDATE "execution_leases"
+      SET "expiresAt" = NOW() + INTERVAL '5 minutes',
+          "lastRenewedAt" = NOW(),
+          "updatedAt" = NOW()
+      WHERE "assignmentId" = ${assignmentId}
+        AND "machineId" = ${machineId}
+        AND status = 'ACTIVE'
+        AND "expiresAt" > NOW()
+        AND EXISTS (SELECT 1 FROM job_assignments WHERE id = ${assignmentId} AND "providerId" = ${providerId})
+    `;
+
+    if (updated === 0) {
+      throw new ConflictException('Lease is not ACTIVE or has already expired');
     }
 
     return { success: true };

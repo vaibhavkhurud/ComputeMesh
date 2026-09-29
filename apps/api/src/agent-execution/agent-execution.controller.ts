@@ -37,4 +37,9 @@ export class AgentExecutionController {
   ) {
     return this.executionService.reportResult(req.agent.machineId, req.agent.providerId, assignmentId, dto);
   }
+
+  @Post(':id/renew-lease')
+  renewLease(@Req() req: any, @Param('id') assignmentId: string) {
+    return this.executionService.renewLease(req.agent.machineId, req.agent.providerId, assignmentId);
+  }
 }

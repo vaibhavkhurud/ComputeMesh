@@ -7,9 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"time"
 	"computemesh-agent/internal/client"
 	"computemesh-agent/internal/config"
 	"computemesh-agent/internal/discovery"
+	"computemesh-agent/internal/executor"
 	"computemesh-agent/internal/health"
 	"computemesh-agent/internal/identity"
 )
@@ -63,6 +65,26 @@ func main() {
 
 	go health.StartHeartbeat(ctx, api)
 	go health.StartCapabilities(ctx, api)
+
+	log.Println("Starting M7 Execution Loop...")
+	loop, err := executor.NewExecutionLoop(api, "/tmp/computemesh-workspaces")
+	if err != nil {
+		log.Printf("Failed to initialize ExecutionLoop: %v", err)
+	} else {
+		loop.CleanupOrphans()
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					loop.PollAndExecute(ctx)
+				}
+			}
+		}()
+	}
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)

@@ -111,6 +111,7 @@ model Machine {
   agentIdentity   AgentIdentity?
   discovery       MachineDiscovery?
   assignments     JobAssignment[]
+  leases          ExecutionLease[]
 
   @@index([providerId])
   @@index([status])
@@ -215,6 +216,8 @@ model Job {
   user        User           @relation(fields: [userId], references: [id])
   name        String
   status      JobStatus      @default(CREATED)
+  checkpointSequence Int       @default(0)
+  recoveryAttempts Int       @default(0)
   
   inputBucket String?
   inputKey    String?
@@ -229,6 +232,8 @@ model Job {
   requirement JobRequirement?
   events      JobEvent[]
   assignments JobAssignment[]
+  leases      ExecutionLease[]
+  checkpoints Checkpoint[]
 
   @@index([userId])
   @@index([status])
@@ -304,9 +309,82 @@ model JobAssignment {
   outputKey        String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
+  
+  lease            ExecutionLease?
+  checkpoints      Checkpoint[]
 
   @@index([jobId, status])
   @@index([machineId, status])
   @@map("job_assignments")
 }
+
+enum LeaseStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  CLOSED
+}
+
+model ExecutionLease {
+  id              String        @id @default(uuid())
+  jobId           String
+  assignmentId    String        @unique
+  machineId       String
+  
+  issuedAt        DateTime      @default(now())
+  expiresAt       DateTime
+  lastRenewedAt   DateTime      @default(now())
+  
+  status          LeaseStatus   @default(ACTIVE)
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  job             Job           @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  assignment      JobAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  machine         Machine       @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  checkpoints     Checkpoint[]
+
+  @@index([jobId])
+  @@index([expiresAt])
+  @@map("execution_leases")
+}
+
+enum CheckpointStatus {
+  CREATING
+  UPLOADED
+  VERIFYING
+  VERIFIED
+  FAILED
+  DELETED
+}
+
+model Checkpoint {
+  id                String           @id @default(uuid())
+  jobId             String
+  assignmentId      String
+  executionLeaseId  String
+  sequence          Int
+  status            CheckpointStatus
+  bucket            String
+  storageKey        String
+  sizeBytes         BigInt
+  checksumSha256    String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  verifiedAt        DateTime?
+  metadata          Json?
+  failureReason     String?
+
+  job               Job              @relation(fields: [jobId], references: [id])
+  assignment        JobAssignment    @relation(fields: [assignmentId], references: [id])
+  executionLease    ExecutionLease   @relation(fields: [executionLeaseId], references: [id])
+
+  @@unique([jobId, sequence])
+  @@index([jobId, status, sequence(sort: Desc)])
+  @@index([assignmentId])
+  @@index([executionLeaseId])
+  @@map("checkpoints")
+}
+
 

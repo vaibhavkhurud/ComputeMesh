@@ -14,12 +14,13 @@
     "migrate:reset": "prisma migrate reset"
   },
   "dependencies": {
-    "@prisma/client": "^6.1.0"
+    "@prisma/client": "^6.1.0",
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "prisma": "^6.1.0",
-    "typescript": "^5.6.0",
     "rimraf": "^6.0.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.6.0"
   }
 }

@@ -64,8 +64,16 @@ export class AgentsService {
 
   async heartbeat(agentId: string, dto: AgentHeartbeatDto) {
     const db = getDatabaseClient();
-    await db.agentIdentity.update({
-      where: { id: agentId },
+    const oneMinuteAgo = new Date(Date.now() - 60000);
+    
+    await db.agentIdentity.updateMany({
+      where: { 
+        id: agentId,
+        OR: [
+          { lastHeartbeatAt: null },
+          { lastHeartbeatAt: { lt: oneMinuteAgo } }
+        ]
+      },
       data: {
         lastHeartbeatAt: new Date(),
         agentVersion: dto.agentVersion,

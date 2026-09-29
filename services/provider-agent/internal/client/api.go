@@ -105,3 +105,25 @@ func (c *ApiClient) UpdateCapabilities(ctx context.Context, caps interface{}) er
 	}
 	return nil
 }
+
+func (c *ApiClient) RenewLease(ctx context.Context, assignmentId string) error {
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/agent/assignments/%s/renew-lease", c.BaseUrl, assignmentId), nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-ComputeMesh-Agent-ID", c.AgentId)
+	req.Header.Set("Authorization", "Bearer "+c.AgentSecret)
+
+	resp, err := c.HttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return fmt.Errorf("renew lease failed with status %d", resp.StatusCode)
+	}
+	return nil
+}
