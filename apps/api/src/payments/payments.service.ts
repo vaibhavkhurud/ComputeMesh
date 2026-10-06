@@ -126,7 +126,10 @@ export class PaymentsService {
 
     const db = getDatabaseClient();
 
+    let claimed = false;
     let providerEvent;
+    
+    // CRITICAL 1: Atomic claiming
     try {
       providerEvent = await db.paymentProviderEvent.create({
         data: {
@@ -135,6 +138,7 @@ export class PaymentsService {
           status: 'PENDING',
         },
       });
+      claimed = true;
     } catch (e: any) {
       if (e.code === 'P2002') {
         providerEvent = await db.paymentProviderEvent.findUnique({ where: { stripeEventId: event.id } });
@@ -143,8 +147,31 @@ export class PaymentsService {
       }
     }
 
-    if (providerEvent && providerEvent.status === 'PROCESSED') {
-      return { received: true, status: 'already_processed' };
+    if (!claimed && providerEvent) {
+      if (providerEvent.status === 'PROCESSED') {
+        return { received: true, status: 'already_processed' };
+      }
+      if (providerEvent.status === 'PENDING') {
+        // Another thread is processing this right now.
+        // Return 409 to safely back off and let Stripe retry if the other thread fails.
+        throw new ConflictException('Concurrent webhook processing');
+      }
+      if (providerEvent.status === 'FAILED') {
+        // Retry atomic claim
+        const updated = await db.paymentProviderEvent.updateMany({
+          where: { stripeEventId: event.id, status: 'FAILED' },
+          data: { status: 'PENDING' }
+        });
+        if (updated.count === 1) {
+          claimed = true;
+        } else {
+          throw new ConflictException('Concurrent webhook processing');
+        }
+      }
+    }
+
+    if (!claimed) {
+      throw new ConflictException('Could not claim event for processing');
     }
 
     try {
@@ -161,7 +188,10 @@ export class PaymentsService {
         
         if (!payment) throw new NotFoundException('Payment not found');
 
-        // Validation against authoritative payment!
+        // CRITICAL 3: Validation against authoritative payment!
+        if (payment.stripePaymentIntentId !== paymentIntent.id) {
+          throw new BadRequestException('Intent mismatch');
+        }
         if (paymentIntent.amount !== Number(payment.amount)) {
           throw new BadRequestException('Amount mismatch');
         }
@@ -210,7 +240,7 @@ export class PaymentsService {
           attemptCount: { increment: 1 },
         },
       });
-      throw error;
+      throw error; // Re-throw to return 500 to Stripe
     }
   }
 }

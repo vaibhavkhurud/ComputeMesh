@@ -144,6 +144,7 @@ describe('M13-B2 Customer Payment Flow', () => {
       walletId: 'w1',
       amount: 1000n,
       currency: 'usd',
+      stripePaymentIntentId: 'pi_123',
       status: 'REQUIRES_ACTION'
     });
 

@@ -316,20 +316,35 @@ export class FinancialService {
   async processDeposit(paymentId: string, idempotencyKey: string) {
     const db = getDatabaseClient();
 
-    const existingTx = await db.financialTransaction.findUnique({
-      where: { idempotencyKey },
-    });
-    if (existingTx) return existingTx;
-
     return await db.$transaction(async (tx) => {
+      // CRITICAL 2: Idempotency inside tx
+      const existingTx = await tx.financialTransaction.findUnique({
+        where: { idempotencyKey },
+      });
+      if (existingTx) return existingTx;
+
       // 1. Load authoritative payment
       const payment = await tx.payment.findUnique({ where: { id: paymentId } });
       if (!payment) throw new NotFoundException('Payment not found');
+      
+      // CRITICAL 5: Do not create duplicate deposits
       if (payment.status === 'SUCCEEDED') {
         throw new BadRequestException('Payment already succeeded');
       }
 
-      const systemWalletObj = await this.getSystemWallet();
+      // CRITICAL 4: Safe system wallet initialization inside tx
+      let systemWalletObj = await tx.wallet.findFirst({ where: { type: 'SYSTEM' } });
+      if (!systemWalletObj) {
+        systemWalletObj = await tx.wallet.create({
+          data: {
+            userId: 'SYSTEM',
+            type: 'SYSTEM',
+            currency: 'USD',
+            balance: 0n,
+            reservedBalance: 0n,
+          },
+        });
+      }
 
       // 2. Lock wallets deterministically by ID to avoid deadlocks
       const walletIds = [payment.walletId, systemWalletObj.id].sort();
@@ -354,36 +369,28 @@ export class FinancialService {
       const finTx = await tx.financialTransaction.create({
         data: {
           type: 'DEPOSIT',
-          status: 'COMPLETED',
+          status: 'PENDING',
           idempotencyKey,
           currency: payment.currency.toUpperCase(),
-          completedAt: new Date(),
         },
       });
 
       // 5. Create Ledger Entries (Balance: Customer CREDIT, System DEBIT)
       await tx.ledgerEntry.createMany({
         data: [
-          {
-            transactionId: finTx.id,
-            walletId: customerWallet.id,
-            type: 'CREDIT',
-            amount: payment.amount,
-          },
-          {
-            transactionId: finTx.id,
-            walletId: systemWallet.id,
-            type: 'DEBIT',
-            amount: payment.amount,
-          },
+          { transactionId: finTx.id, walletId: customerWallet.id, type: 'CREDIT', amount: payment.amount },
+          { transactionId: finTx.id, walletId: systemWallet.id, type: 'DEBIT', amount: payment.amount },
         ],
       });
 
-      // 6. Update balances (DEBIT lowers, CREDIT raises)
+      // 6. Mutate balances
       await tx.$queryRaw`UPDATE wallets SET balance = balance + ${payment.amount} WHERE id = ${customerWallet.id}`;
       await tx.$queryRaw`UPDATE wallets SET balance = balance - ${payment.amount} WHERE id = ${systemWallet.id}`;
 
-      return await tx.financialTransaction.update({ where: { id: finTx.id }, data: { status: 'COMPLETED', completedAt: new Date() }});
+      return await tx.financialTransaction.update({
+        where: { id: finTx.id },
+        data: { status: 'COMPLETED', completedAt: new Date() }
+      });
     });
   }
 }
