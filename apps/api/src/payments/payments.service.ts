@@ -129,21 +129,25 @@ export class PaymentsService {
     let claimed = false;
     let providerEvent;
     
-    // CRITICAL 1: Atomic claiming
-    try {
-      providerEvent = await db.paymentProviderEvent.create({
-        data: {
-          stripeEventId: event.id,
-          eventType: event.type,
-          status: 'PENDING',
-        },
-      });
-      claimed = true;
-    } catch (e: any) {
-      if (e.code === 'P2002') {
-        providerEvent = await db.paymentProviderEvent.findUnique({ where: { stripeEventId: event.id } });
-      } else {
-        throw e;
+    // CRITICAL 1: Atomic claiming & STALE recovery
+    providerEvent = await db.paymentProviderEvent.findUnique({ where: { stripeEventId: event.id } });
+    
+    if (!providerEvent) {
+      try {
+        providerEvent = await db.paymentProviderEvent.create({
+          data: {
+            stripeEventId: event.id,
+            eventType: event.type,
+            status: 'PENDING',
+          },
+        });
+        claimed = true;
+      } catch (e: any) {
+        if (e.code === 'P2002') {
+          providerEvent = await db.paymentProviderEvent.findUnique({ where: { stripeEventId: event.id } });
+        } else {
+          throw e;
+        }
       }
     }
 
@@ -151,12 +155,24 @@ export class PaymentsService {
       if (providerEvent.status === 'PROCESSED') {
         return { received: true, status: 'already_processed' };
       }
+      
       if (providerEvent.status === 'PENDING') {
-        // Another thread is processing this right now.
-        // Return 409 to safely back off and let Stripe retry if the other thread fails.
-        throw new ConflictException('Concurrent webhook processing');
-      }
-      if (providerEvent.status === 'FAILED') {
+        const staleThresholdMs = 5 * 60 * 1000; // 5 minutes
+        if (Date.now() - providerEvent.updatedAt.getTime() > staleThresholdMs) {
+          // Stale PENDING! Claim it.
+          const updated = await db.paymentProviderEvent.updateMany({
+            where: { stripeEventId: event.id, status: 'PENDING', updatedAt: providerEvent.updatedAt },
+            data: { attemptCount: { increment: 1 } } // implicitly bumps updatedAt
+          });
+          if (updated.count === 1) {
+            claimed = true;
+          } else {
+            throw new ConflictException('Concurrent webhook processing (stale claim failed)');
+          }
+        } else {
+          throw new ConflictException('Concurrent webhook processing (active pending)');
+        }
+      } else if (providerEvent.status === 'FAILED') {
         // Retry atomic claim
         const updated = await db.paymentProviderEvent.updateMany({
           where: { stripeEventId: event.id, status: 'FAILED' },
@@ -188,7 +204,6 @@ export class PaymentsService {
         
         if (!payment) throw new NotFoundException('Payment not found');
 
-        // CRITICAL 3: Validation against authoritative payment!
         if (payment.stripePaymentIntentId !== paymentIntent.id) {
           throw new BadRequestException('Intent mismatch');
         }
@@ -199,9 +214,9 @@ export class PaymentsService {
           throw new BadRequestException('Currency mismatch');
         }
 
-        if (payment.status !== 'SUCCEEDED') {
-          await this.financialService.processDeposit(payment.id, `pi_dep_${payment.id}`);
-        }
+        // CRITICAL 2: Always call processDeposit. Let it handle idempotency & anomaly detection.
+        await this.financialService.processDeposit(payment.id, `pi_dep_${payment.id}`);
+        
       } else if (event.type === 'payment_intent.payment_failed') {
         const paymentIntent = event.data.object as any;
         const computeMeshPaymentId = paymentIntent.metadata?.computeMeshPaymentId;
@@ -240,7 +255,7 @@ export class PaymentsService {
           attemptCount: { increment: 1 },
         },
       });
-      throw error; // Re-throw to return 500 to Stripe
+      throw error;
     }
   }
 }

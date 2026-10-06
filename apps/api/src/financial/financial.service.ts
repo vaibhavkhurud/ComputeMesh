@@ -329,7 +329,7 @@ export class FinancialService {
       
       // CRITICAL 5: Do not create duplicate deposits
       if (payment.status === 'SUCCEEDED') {
-        throw new BadRequestException('Payment already succeeded');
+        throw new BadRequestException('Payment already succeeded without deposit transaction (Anomaly)');
       }
 
       // CRITICAL 4: Safe system wallet initialization inside tx
@@ -337,7 +337,7 @@ export class FinancialService {
       if (!systemWalletObj) {
         systemWalletObj = await tx.wallet.create({
           data: {
-            userId: 'SYSTEM',
+            userId: null,
             type: 'SYSTEM',
             currency: 'USD',
             balance: 0n,
