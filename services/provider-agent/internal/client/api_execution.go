@@ -130,3 +130,34 @@ func (c *ApiClient) GetStatus(ctx context.Context, assignmentId string) (string,
 	}
 	return res.Status, nil
 }
+
+func (c *ApiClient) CreateCheckpointIntent(ctx context.Context, jobId string, size int64, hash string) (*executor.IntentResponse, error) {
+	body, _ := json.Marshal(map[string]interface{}{"sizeBytes": size, "checksumSha256": hash})
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.BaseUrl+"/agent/jobs/"+jobId+"/checkpoints/intent", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-ComputeMesh-Agent-ID", c.AgentId)
+	req.Header.Set("Authorization", "Bearer "+c.AgentSecret)
+	resp, err := c.HttpClient.Do(req)
+	if err != nil { return nil, err }
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 201 { return nil, fmt.Errorf("intent failed: %d", resp.StatusCode) }
+	var res executor.IntentResponse
+	json.NewDecoder(resp.Body).Decode(&res)
+	return &res, nil
+}
+
+func (c *ApiClient) CompleteCheckpoint(ctx context.Context, jobId, checkpointId string) error {
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.BaseUrl+"/agent/jobs/"+jobId+"/checkpoints/"+checkpointId+"/complete", nil)
+	req.Header.Set("X-ComputeMesh-Agent-ID", c.AgentId)
+	req.Header.Set("Authorization", "Bearer "+c.AgentSecret)
+	resp, err := c.HttpClient.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 201 { return fmt.Errorf("complete failed: %d", resp.StatusCode) }
+	return nil
+}
+
+func (c *ApiClient) FailCheckpoint(ctx context.Context, jobId, checkpointId, reason string) error {
+	return nil
+}
+

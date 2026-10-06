@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 
 // Mock dependencies
 const mockDb = {
-  user: {
+  securityEvent: { create: jest.fn() }, user: {
     findUnique: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
@@ -30,7 +30,7 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: JwtService, useValue: { signAsync: jest.fn().mockResolvedValue('mockJwt') } },
-        { provide: ConfigService, useValue: { get: jest.fn((k, def) => def || 'mockSecret') } },
+        { provide: ConfigService, useValue: { get: jest.fn((_k, def) => def || 'mockSecret') } },
         { provide: 'LOGGER', useValue: { info: jest.fn(), error: jest.fn(), warn: jest.fn() } },
       ],
     }).compile();

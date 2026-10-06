@@ -15,27 +15,27 @@ func NewWorkspaceManager(baseDir string) *WorkspaceManager {
 }
 
 func (w *WorkspaceManager) CreateWorkspace(jobId, executionId string) (string, error) {
-	// e.g. /tmp/computemesh-job-<jobId>-<executionId>
-	// Sanitize inputs internally if needed, though they come from trusted API
 	path := filepath.Join(w.baseDir, fmt.Sprintf("computemesh-job-%s-%s", jobId, executionId))
+	absPath, _ := filepath.Abs(path)
 	
-	if err := os.MkdirAll(path, 0755); err != nil {
+	if err := os.MkdirAll(absPath, 0755); err != nil {
 		return "", fmt.Errorf("failed to create workspace: %w", err)
 	}
 
 	// Create output dir
-	outPath := filepath.Join(path, "output")
+	outPath := filepath.Join(absPath, "output")
 	if err := os.MkdirAll(outPath, 0755); err != nil {
 		return "", fmt.Errorf("failed to create output dir: %w", err)
 	}
 
-	return path, nil
+	return absPath, nil
 }
 
 func (w *WorkspaceManager) CleanupWorkspace(path string) error {
 	// Ensure we only delete under baseDir
-	if !filepath.HasPrefix(path, w.baseDir) {
-		return fmt.Errorf("security violation: path %s is not inside base directory", path)
+	absBase, _ := filepath.Abs(w.baseDir)
+	if !filepath.HasPrefix(path, absBase) {
+		return fmt.Errorf("security violation: path %s is not inside base directory %s", path, absBase)
 	}
 	return os.RemoveAll(path)
 }

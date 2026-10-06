@@ -11,6 +11,8 @@ export const jobRequirementSchema = z.object({
   architecture: z.string().max(50).optional(),
   operatingSystem: z.string().max(100).optional(),
   region: z.string().max(50).optional(),
+  targetMachineId: z.string().uuid().optional(),
+  maxPriceCentsPerHour: z.number().int().min(0).optional(),
 });
 
 export const createJobSchema = z.object({

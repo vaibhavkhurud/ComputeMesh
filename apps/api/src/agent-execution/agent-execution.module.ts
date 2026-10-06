@@ -3,8 +3,10 @@ import { AgentExecutionController } from './agent-execution.controller';
 import { AgentExecutionService } from './agent-execution.service';
 
 import { createLogger } from '@computemesh/logger';
+import { ProvidersModule } from '../providers/providers.module';
 
 @Module({
+  imports: [ProvidersModule],
   controllers: [AgentExecutionController],
   providers: [
     AgentExecutionService,

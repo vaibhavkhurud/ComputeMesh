@@ -182,22 +182,39 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       }
       const reqs = job.requirement;
       
+      const machineWhere: any = {
+        status: 'REGISTERED',
+        providerId: { notIn: excludedProviderIds },
+        provider: { status: 'ACTIVE' },
+        agentIdentity: {
+          status: 'ACTIVE',
+          lastHeartbeatAt: { gte: fiveMinutesAgo }
+        }
+      };
+
       // Fetch all candidates where agent is fresh and provider active, machine registered.
       const allCandidates = await this.db.machine.findMany({
-        where: {
-          status: 'REGISTERED',
-          providerId: { notIn: excludedProviderIds },
-          provider: { status: 'ACTIVE' },
-          agentIdentity: {
-            status: 'ACTIVE',
-            lastHeartbeatAt: { gte: fiveMinutesAgo }
-          }
-        },
-        include: { discovery: true }
+        where: machineWhere,
+        include: { discovery: true, pricing: true }
       });
 
       const eligible = allCandidates.filter(c => {
         if (!c.discovery) return false;
+        
+        // Price Ceiling Check
+        if (reqs.maxPriceCentsPerHour !== null && reqs.maxPriceCentsPerHour !== undefined && (c as any).pricing) {
+          const p = (c as any).pricing;
+          const d = c.discovery;
+          const cpuCores = d.cpuLogicalCores || 0;
+          const memoryGb = Math.ceil((d.memoryMb || 0) / 1024);
+          const gpuCount = d.gpuCount || 0;
+          const componentPrice = (p.cpuCentsPerHour * cpuCores) + (p.memoryGbCentsPerHour * memoryGb) + (p.gpuCentsPerHour * gpuCount);
+          const actualPrice = Math.max(p.flatCentsPerHour, componentPrice);
+          if (actualPrice > reqs.maxPriceCentsPerHour) {
+            return false;
+          }
+        }
+        
         return this.machineMatchesJobRequirements(reqs, c);
       });
 
@@ -213,11 +230,18 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         const rCoresMin = reqs.cpuCoresMin ?? 0;
         const dMem = d.memoryMb ?? 0;
         const rMem = reqs.memoryMbMin ?? 0;
-        const score = (cLogicalCores - rCoresMin) + ((dMem - rMem) / 1024);
+        
+        let score = (cLogicalCores - rCoresMin) + ((dMem - rMem) / 1024);
+        
         return { machine: c, score };
       });
 
       ranked.sort((a, b) => {
+        // M12 Deterministic Preference Targeting
+        if (reqs.targetMachineId) {
+          if (a.machine.id === reqs.targetMachineId && b.machine.id !== reqs.targetMachineId) return -1;
+          if (b.machine.id === reqs.targetMachineId && a.machine.id !== reqs.targetMachineId) return 1;
+        }
         if (a.score !== b.score) return b.score - a.score;
         return a.machine.id.localeCompare(b.machine.id);
       });

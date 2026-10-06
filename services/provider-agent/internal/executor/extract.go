@@ -10,7 +10,13 @@ import (
 	"strings"
 )
 
-func SafeExtract(archivePath, destDir string) error {
+func SafeExtract(archivePath, destDir, expectedSHA256 string) error {
+	if expectedSHA256 != "" {
+		if err := VerifySHA256(archivePath, expectedSHA256); err != nil {
+			return fmt.Errorf("checksum mismatch: %w", err)
+		}
+	}
+
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -71,7 +77,8 @@ func SafeExtract(archivePath, destDir string) error {
 				return fmt.Errorf("decompression ratio or max size exceeded")
 			}
 
-			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(header.Mode))
+			mode := os.FileMode(header.Mode) &^ (os.ModeSetuid | os.ModeSetgid | 0002)
+			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR|os.O_TRUNC, mode)
 			if err != nil {
 				return err
 			}

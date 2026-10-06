@@ -53,7 +53,7 @@ func TestExtractLimits(t *testing.T) {
 			destDir := filepath.Join(tmpDir, "dest")
 			os.Mkdir(destDir, 0755)
 
-			err := SafeExtract(archivePath, destDir)
+			err := SafeExtract(archivePath, destDir, "")
 			if err == nil {
 				t.Fatalf("expected error for %s, got nil", tt.name)
 			}

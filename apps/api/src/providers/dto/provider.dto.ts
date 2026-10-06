@@ -44,7 +44,22 @@ export const updateMachineSchema = z.object({
   resources: machineResourceSchema.optional(),
 });
 
+export const updateMachineListingSchema = z.object({
+  marketplaceStatus: z.enum(['UNLISTED', 'LISTED', 'PAUSED']),
+});
+
+export const updateMachinePricingSchema = z.object({
+  flatCentsPerHour: z.number().int().min(0).max(10000000).optional(),
+  cpuCentsPerHour: z.number().int().min(0).max(1000000).optional(),
+  memoryGbCentsPerHour: z.number().int().min(0).max(1000000).optional(),
+  gpuCentsPerHour: z.number().int().min(0).max(1000000).optional(),
+  currency: z.string().min(1).max(5).default('USD'),
+  minBillingMinutes: z.number().int().min(1).max(1440).default(60),
+});
+
 export type RegisterProviderDto = z.infer<typeof registerProviderSchema>;
 export type UpdateProviderDto = z.infer<typeof updateProviderSchema>;
 export type CreateMachineDto = z.infer<typeof createMachineSchema>;
 export type UpdateMachineDto = z.infer<typeof updateMachineSchema>;
+export type UpdateMachineListingDto = z.infer<typeof updateMachineListingSchema>;
+export type UpdateMachinePricingDto = z.infer<typeof updateMachinePricingSchema>;

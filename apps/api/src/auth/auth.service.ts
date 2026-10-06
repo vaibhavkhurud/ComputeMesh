@@ -42,15 +42,18 @@ export class AuthService {
     const user = await this.db.user.findUnique({ where: { email } });
     
     if (!user) {
+      await this.db.securityEvent.create({ data: { type: 'AUTH_FAILURE', actorType: 'USER', ipAddress: 'unknown', metadata: { email } } });
       throw new UnauthorizedException('Invalid credentials');
     }
 
     if (user.status !== 'ACTIVE') {
+      await this.db.securityEvent.create({ data: { type: 'AUTH_FAILURE', actorType: 'USER', actorId: user.id, metadata: { reason: 'Inactive account' } } });
       throw new UnauthorizedException('Account is not active');
     }
     
     const isPasswordValid = await this.verifyPassword(user.passwordHash, dto.password);
     if (!isPasswordValid) {
+      await this.db.securityEvent.create({ data: { type: 'AUTH_FAILURE', actorType: 'USER', actorId: user.id, ipAddress: 'unknown', metadata: { email } } });
       throw new UnauthorizedException('Invalid credentials');
     }
 

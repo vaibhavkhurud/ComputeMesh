@@ -30,8 +30,7 @@ export class AgentExecutionService {
     const result = [];
     for (const a of assignments) {
       // Resolve runtime to a server-controlled immutable digest.
-      let digest = 'sha256:5e23090353324d887c48ad5e5c56d294eab81588df9605b07d1afe895f9cc8f8';
-      let img = `hello-world@${digest}`;
+      let img = `alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6`;
       
       let checkpointUrl = undefined;
       let checkpointChecksum = undefined;
@@ -42,7 +41,7 @@ export class AgentExecutionService {
           orderBy: { sequence: 'desc' }
         });
         if (cp) {
-          checkpointUrl = `http://localhost:8333/${cp.bucket}/${cp.storageKey}`;
+          checkpointUrl = `http://172.26.0.1:8333/${cp.bucket}/${cp.storageKey}`;
           checkpointChecksum = cp.checksumSha256;
         }
       }

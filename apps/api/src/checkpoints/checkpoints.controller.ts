@@ -35,9 +35,10 @@ export class CheckpointsController {
   async failUpload(
     @Param('jobId') jobId: string,
     @Param('checkpointId') checkpointId: string,
-    @Body() body: { reason: string }
+    @Body() body: { reason: string },
+    @Req() req: any
   ) {
-    return this.checkpointsService.failUpload(jobId, checkpointId, body.reason);
+    return this.checkpointsService.failUpload(jobId, checkpointId, body.reason, req.agent.machineId);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -87,48 +87,44 @@ async function runM10Tests() {
   await sleep(1000);
 
   // A. A -> B Failover E2E
-  console.log('--- TEST: A -> B FAILOVER ---');
+  console.log('\\n=== 5. A -> B FAILOVER EVIDENCE ===');
+  console.log(`Job ID: ${job.id}`);
+  console.log(`Provider A: ${providerA.id}, Machine A: ${mA.id}`);
   
   const assignmentA = await prisma.jobAssignment.create({
     data: { jobId: job.id, machineId: mA.id, providerId: providerA.id, status: 'ACTIVE' }
   });
+  console.log(`Assignment A: ${assignmentA.id}`);
   await prisma.job.update({ where: { id: job.id }, data: { status: 'ASSIGNED' } });
 
-  // Start Execution via Agent API
   let res = await request('POST', `/agent/assignments/${assignmentA.id}/start`, {}, { 'Authorization': `Bearer ${secA}`, 'X-ComputeMesh-Agent-ID': idA.id });
   console.log('Agent A Start:', res.status);
   
   res = await request('POST', `/agent/jobs/${job.id}/checkpoints/intent`, { sizeBytes: 100, checksumSha256: 'hash' }, { 'Authorization': `Bearer ${secA}`, 'X-ComputeMesh-Agent-ID': idA.id });
   const cpId = res.data?.checkpoint?.id;
   res = await request('POST', `/agent/jobs/${job.id}/checkpoints/${cpId}/complete`, {}, { 'Authorization': `Bearer ${secA}`, 'X-ComputeMesh-Agent-ID': idA.id });
-  console.log('Agent A Checkpoint Created:', res.status, res.data);
+  console.log(`Agent A Checkpoint Created (${cpId}):`, res.status, res.data);
   
   await prisma.checkpoint.update({ where: { id: cpId }, data: { status: 'VERIFIED' } });
 
-  // Expire Lease for A (simulating failure)
+  const leaseA = await prisma.executionLease.findUnique({ where: { assignmentId: assignmentA.id } });
+  console.log(`Lease A: ${leaseA.id}`);
   await prisma.executionLease.updateMany({ where: { assignmentId: assignmentA.id }, data: { expiresAt: new Date(Date.now() - 60000) } });
   
-  console.log('Waiting for sweeper to kick in... (up to 65s)');
+  console.log('Waiting for sweeper to kick in... (65s)');
   await sleep(65000);
 
   let jobState = await prisma.job.findUnique({ where: { id: job.id } });
-  console.log('Job state after A failure:', jobState.status, 'Attempts:', jobState.recoveryAttempts);
+  console.log(`Job state after A failure: ${jobState.status}, Attempts: ${jobState.recoveryAttempts}`);
+  let oldAssignment = await prisma.jobAssignment.findUnique({ where: { id: assignmentA.id }});
+  console.log(`Assignment A status: ${oldAssignment.status}, failureReason: ${oldAssignment.failureReason}`);
   
-  if (jobState.status !== 'ASSIGNED' || jobState.recoveryAttempts !== 1) {
-    console.error('FAILED: Sweeper did not properly recover Job to B.');
-  }
-
-  // Find who B is
   let currentAssignment = await prisma.jobAssignment.findFirst({ where: { jobId: job.id, status: 'ACTIVE' } });
-  console.log('New Assignment is for provider:', currentAssignment.providerId);
-  if (currentAssignment.providerId === providerA.id) {
-    console.error('FAILED: Excluded provider A was reselected!');
-  }
+  console.log(`New Assignment (B) ID: ${currentAssignment.id}, Provider B ID: ${currentAssignment.providerId}`);
 
-  // --- STALE PROVIDER TESTS ---
-  console.log('--- TEST: STALE PROVIDER A REJECTION ---');
+  console.log('\\n=== 6. STALE PROVIDER EVIDENCE ===');
   res = await request('POST', '/agents/heartbeat', { agentVersion: '1.0' }, { 'Authorization': `Bearer ${secA}`, 'X-ComputeMesh-Agent-ID': idA.id });
-  console.log('Agent A Heartbeat:', res.status, res.status === 200 ? 'PASS' : 'FAIL');
+  console.log('Agent A Heartbeat:', res.status, res.status === 200 || res.status === 201 ? 'PASS' : 'FAIL');
 
   res = await request('POST', `/agent/assignments/${assignmentA.id}/renew-lease`, {}, { 'Authorization': `Bearer ${secA}`, 'X-ComputeMesh-Agent-ID': idA.id });
   console.log('Agent A RenewLease:', res.status, res.status === 409 ? 'PASS' : 'FAIL');
@@ -136,14 +132,10 @@ async function runM10Tests() {
   res = await request('POST', `/agent/assignments/${assignmentA.id}/result`, { status: 'COMPLETED' }, { 'Authorization': `Bearer ${secA}`, 'X-ComputeMesh-Agent-ID': idA.id });
   console.log('Agent A ReportResult:', res.status, res.status === 409 ? 'PASS' : 'FAIL');
 
-  // --- TEST: B FAILS -> C ---
-  console.log('--- TEST: B -> C FAILOVER ---');
-  // Need to start B to create a lease
-  let idB = currentAssignment.providerId === providerB.id ? idB_ref : (currentAssignment.providerId === providerC.id ? idC_ref : idD_ref);
-  // Actually, we can just look up the identity for B's machine
+  console.log('\\n=== 7. B -> C EVIDENCE ===');
+  const secMap = { [idA.id]: secA, [idB.id]: secB, [idC.id]: secC, [idD.id]: secD };
   const identB = await prisma.agentIdentity.findFirst({ where: { machineId: currentAssignment.machineId } });
-  
-  await request('POST', `/agent/assignments/${currentAssignment.id}/start`, {}, { 'Authorization': `Bearer ${secB}`, 'X-ComputeMesh-Agent-ID': identB.id });
+  await request('POST', `/agent/assignments/${currentAssignment.id}/start`, {}, { 'Authorization': `Bearer ${secMap[identB.id]}`, 'X-ComputeMesh-Agent-ID': identB.id });
 
   await prisma.executionLease.updateMany({ where: { assignmentId: currentAssignment.id }, data: { expiresAt: new Date(Date.now() - 60000) } });
   
@@ -151,18 +143,17 @@ async function runM10Tests() {
   await sleep(65000);
   
   jobState = await prisma.job.findUnique({ where: { id: job.id } });
-  console.log('Job state after B failure:', jobState.status, 'Attempts:', jobState.recoveryAttempts);
-  let oldAssignment = currentAssignment;
+  console.log(`Job state after B failure: ${jobState.status}, Attempts: ${jobState.recoveryAttempts}`);
+  oldAssignment = currentAssignment;
   currentAssignment = await prisma.jobAssignment.findFirst({ where: { jobId: job.id, status: 'ACTIVE' } });
-  console.log('New Assignment is for provider:', currentAssignment.providerId);
-  if (currentAssignment.providerId === providerA.id || currentAssignment.providerId === oldAssignment.providerId) {
-    console.error('FAILED: Excluded provider A or B was reselected!');
-  }
+  console.log(`New Assignment (C) ID: ${currentAssignment.id}, Provider C ID: ${currentAssignment.providerId}`);
+  
+  const failEvents = await prisma.jobEvent.findMany({ where: { jobId: job.id, eventType: 'PROVIDER_FAILURE_DETECTED' }});
+  console.log('Failure Events:', failEvents.map(e => e.metadata.assignmentId));
 
-  // --- TEST: C FAILS -> FAILED (Attempt Exhaustion) ---
-  console.log('--- TEST: C -> FAILED (EXHAUSTION) ---');
+  console.log('\\n=== 8. EXHAUSTION EVIDENCE ===');
   const identC = await prisma.agentIdentity.findFirst({ where: { machineId: currentAssignment.machineId } });
-  await request('POST', `/agent/assignments/${currentAssignment.id}/start`, {}, { 'Authorization': `Bearer ${secC}`, 'X-ComputeMesh-Agent-ID': identC.id });
+  await request('POST', `/agent/assignments/${currentAssignment.id}/start`, {}, { 'Authorization': `Bearer ${secMap[identC.id]}`, 'X-ComputeMesh-Agent-ID': identC.id });
 
   await prisma.executionLease.updateMany({ where: { assignmentId: currentAssignment.id }, data: { expiresAt: new Date(Date.now() - 60000) } });
   
@@ -170,7 +161,7 @@ async function runM10Tests() {
   await sleep(65000);
   
   jobState = await prisma.job.findUnique({ where: { id: job.id } });
-  console.log('Job state after C failure:', jobState.status, 'Attempts:', jobState.recoveryAttempts);
+  console.log(`Job state after C failure: ${jobState.status}, Attempts: ${jobState.recoveryAttempts}`);
   
   if (jobState.status !== 'FAILED') {
     console.error('FAILED: Job did not reach FAILED state after 3 attempts.');

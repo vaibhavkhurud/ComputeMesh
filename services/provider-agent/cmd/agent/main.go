@@ -43,7 +43,7 @@ func main() {
 			}
 			log.Println("Enrollment successful. Identity saved.")
 		} else {
-			log.Fatalf("No identity found and no enrollment token provided.")
+			log.Fatalf("No identity found and no enrollment token provided. Load err: %v", err)
 		}
 	} else {
 		log.Println("Loaded existing agent identity.")
@@ -67,7 +67,7 @@ func main() {
 	go health.StartCapabilities(ctx, api)
 
 	log.Println("Starting M7 Execution Loop...")
-	loop, err := executor.NewExecutionLoop(api, "/tmp/computemesh-workspaces")
+	loop, err := executor.NewExecutionLoop(api, "./cm-workspaces")
 	if err != nil {
 		log.Printf("Failed to initialize ExecutionLoop: %v", err)
 	} else {

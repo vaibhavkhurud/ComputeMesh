@@ -1,20 +1,13 @@
+/* Utility classes used by marketplace pages */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 0, 0, 0;
-  --background-rgb: 255, 255, 255;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-rgb: 10, 10, 10;
+@layer components {
+  .input {
+    @apply mt-1 block w-full border border-gray-300 rounded px-2 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500;
   }
-}
-
-body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-rgb));
+  .label {
+    @apply block text-xs font-medium text-gray-600;
+  }
 }

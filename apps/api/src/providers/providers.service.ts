@@ -202,4 +202,33 @@ export class ProvidersService {
     this.logger.info(`Agent ${activeAgent.id} for machine ${machine.id} revoked.`);
     return { success: true };
   }
+
+  async updateMachineListing(userId: string, machineId: string, dto: any) {
+    const machine = await this.getMachine(userId, machineId);
+    
+    // Convert status safely using Prisma Enum
+    const updated = await this.db.machine.update({
+      where: { id: machine.id },
+      data: { marketplaceStatus: dto.marketplaceStatus },
+    });
+    
+    return { id: updated.id, marketplaceStatus: updated.marketplaceStatus };
+  }
+
+  async updateMachinePricing(userId: string, machineId: string, dto: any) {
+    const machine = await this.getMachine(userId, machineId);
+    
+    const updated = await this.db.machinePricing.upsert({
+      where: { machineId: machine.id },
+      create: {
+        machineId: machine.id,
+        ...dto
+      },
+      update: {
+        ...dto
+      }
+    });
+
+    return updated;
+  }
 }

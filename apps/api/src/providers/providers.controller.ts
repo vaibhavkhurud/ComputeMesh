@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Patch, Delete, Param, UseGuards, Req, UsePipes } from '@nestjs/common';
+import { Controller, Post, Body, Get, Patch, Delete, Param, UseGuards, Req, UsePipes, Put } from '@nestjs/common';
 import { ProvidersService } from './providers.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -11,10 +11,14 @@ import {
   updateProviderSchema, 
   createMachineSchema, 
   updateMachineSchema,
+  updateMachineListingSchema,
+  updateMachinePricingSchema,
   RegisterProviderDto,
   UpdateProviderDto,
   CreateMachineDto,
-  UpdateMachineDto
+  UpdateMachineDto,
+  UpdateMachineListingDto,
+  UpdateMachinePricingDto
 } from './dto/provider.dto';
 
 @Controller('providers')
@@ -93,5 +97,21 @@ export class ProvidersController {
   revokeAgent(@Req() req: Request, @Param('id') machineId: string) {
     const userId = (req as any).user.sub;
     return this.providersService.revokeAgent(userId, machineId);
+  }
+
+  @Patch('me/machines/:id/listing')
+  @Roles(UserRole.PROVIDER)
+  @UsePipes(new ZodValidationPipe(updateMachineListingSchema))
+  updateMachineListing(@Req() req: Request, @Param('id') machineId: string, @Body() dto: UpdateMachineListingDto) {
+    const userId = (req as any).user.sub;
+    return this.providersService.updateMachineListing(userId, machineId, dto);
+  }
+
+  @Put('me/machines/:id/pricing')
+  @Roles(UserRole.PROVIDER)
+  @UsePipes(new ZodValidationPipe(updateMachinePricingSchema))
+  updateMachinePricing(@Req() req: Request, @Param('id') machineId: string, @Body() dto: UpdateMachinePricingDto) {
+    const userId = (req as any).user.sub;
+    return this.providersService.updateMachinePricing(userId, machineId, dto);
   }
 }

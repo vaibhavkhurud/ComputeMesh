@@ -46,6 +46,27 @@ export class JobsService {
       inputKey = inputKey.replace('{JOB_ID}', jobId);
     }
 
+    let quotedPriceCentsPerHour = null;
+    let quotedCurrency = null;
+
+    if (dto.requirements?.targetMachineId) {
+      const targetMachine = await this.db.machine.findUnique({
+        where: { id: dto.requirements.targetMachineId },
+        include: { pricing: true, discovery: true }
+      });
+      if (targetMachine && targetMachine.pricing) {
+        const p = targetMachine.pricing;
+        const d = targetMachine.discovery;
+        const cpuCores = d?.cpuLogicalCores || 0;
+        const memoryGb = Math.ceil((d?.memoryMb || 0) / 1024);
+        const gpuCount = d?.gpuCount || 0;
+        
+        const componentPrice = (p.cpuCentsPerHour * cpuCores) + (p.memoryGbCentsPerHour * memoryGb) + (p.gpuCentsPerHour * gpuCount);
+        quotedPriceCentsPerHour = Math.max(p.flatCentsPerHour, componentPrice);
+        quotedCurrency = p.currency;
+      }
+    }
+
     return await this.db.$transaction(async (tx) => {
       const job = await tx.job.create({
         data: {
@@ -56,6 +77,8 @@ export class JobsService {
           inputBucket,
           inputKey,
           inputSize: dto.inputSize !== undefined ? BigInt(dto.inputSize) : null,
+          quotedPriceCentsPerHour,
+          quotedCurrency,
           queuedAt: new Date(),
           
           requirement: dto.requirements ? {
@@ -70,6 +93,8 @@ export class JobsService {
               architecture: dto.requirements.architecture,
               operatingSystem: dto.requirements.operatingSystem,
               region: dto.requirements.region,
+              targetMachineId: dto.requirements.targetMachineId,
+              maxPriceCentsPerHour: dto.requirements.maxPriceCentsPerHour,
             }
           } : undefined,
 

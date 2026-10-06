@@ -1,8 +1,11 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException } from '@nestjs/common';
-import { getDatabaseClient } from '@computemesh/database';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException, Inject } from '@nestjs/common';
+import { DATABASE_CLIENT } from '../../providers/database.provider';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class AgentAuthGuard implements CanActivate {
+  constructor(@Inject(DATABASE_CLIENT) private readonly db: any) {}
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const agentId = request.headers['x-computemesh-agent-id'];
@@ -17,12 +20,9 @@ export class AgentAuthGuard implements CanActivate {
     }
 
     const agentSecret = authHeader.substring(7);
-    const db = getDatabaseClient();
-
-    const crypto = require('crypto');
     const secretHash = crypto.createHash('sha256').update(agentSecret).digest('hex');
 
-    const identity = await db.agentIdentity.findUnique({
+    const identity = await this.db.agentIdentity.findUnique({
       where: { id: agentId },
       include: { machine: true }
     });
@@ -31,7 +31,10 @@ export class AgentAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid agent credentials');
     }
 
-    if (identity.credentialHash !== secretHash) {
+    const expectedHashBuffer = Buffer.from(identity.credentialHash, 'hex');
+    const providedHashBuffer = Buffer.from(secretHash, 'hex');
+
+    if (expectedHashBuffer.length !== providedHashBuffer.length || !crypto.timingSafeEqual(expectedHashBuffer, providedHashBuffer)) {
       throw new UnauthorizedException('Invalid agent credentials');
     }
 

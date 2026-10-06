@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-units"
 )
 
 type DockerExecutor struct {
@@ -52,12 +53,17 @@ func (d *DockerExecutor) Execute(ctx context.Context, cfg ExecutionConfig) (stri
 		NetworkMode:     "none",
 		PidMode:         "", // Private PID namespace
 		IpcMode:         "", // Private IPC namespace
+		ShmSize:         64 * 1024 * 1024,
 		Binds:           []string{fmt.Sprintf("%s:/workspace", cfg.Workspace)}, // We will assume nosuid,nodev are set on the tempfs mount itself by the OS
 		Resources: container.Resources{
 			NanoCPUs:   cfg.NanoCPUs,
 			Memory:     cfg.MemoryBytes,
 			MemorySwap: cfg.MemoryBytes, // Prevent swap
 			PidsLimit:  &cfg.PidsLimit,
+			Ulimits: []*units.Ulimit{
+				{Name: "nofile", Soft: 1024, Hard: 2048},
+				{Name: "nproc", Soft: 512, Hard: 512},
+			},
 		},
 	}
 
@@ -73,6 +79,7 @@ func (d *DockerExecutor) Execute(ctx context.Context, cfg ExecutionConfig) (stri
 
 	resp, err := d.client.ContainerCreate(ctx, &container.Config{
 		Image: cfg.Image,
+		Cmd:   []string{"sh", "/workspace/run.sh"},
 		User:  "1000:1000", // Enforce non-root (assuming trusted images follow this)
 	}, hostConfig, &network.NetworkingConfig{}, nil, "")
 	if err != nil {

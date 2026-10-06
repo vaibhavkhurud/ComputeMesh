@@ -4,9 +4,10 @@ import { CheckpointsService } from './checkpoints.service';
 import { CheckpointsCleanupService } from './checkpoints-cleanup.service';
 import { AuthModule } from '../auth/auth.module';
 import { AgentsModule } from '../agents/agents.module';
+import { ProvidersModule } from '../providers/providers.module';
 
 @Module({
-  imports: [AuthModule, AgentsModule],
+  imports: [AuthModule, AgentsModule, ProvidersModule],
   controllers: [CheckpointsController],
   providers: [CheckpointsService, CheckpointsCleanupService],
   exports: [CheckpointsService, CheckpointsCleanupService]

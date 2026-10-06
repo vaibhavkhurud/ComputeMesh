@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "windows"]
 }
 
 datasource db {
@@ -11,11 +12,417 @@ datasource db {
 model SystemInfo {
   id        Int      @id @default(autoincrement())
   key       String   @unique @db.VarChar(255)
-  value     String   @db.Text
+  value     String
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("system_info")
+}
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  passwordHash  String
+  role          UserRole   @default(CUSTOMER)
+  status        UserStatus @default(ACTIVE)
+  emailVerified Boolean    @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  jobs          Job[]
+  provider      Provider?
+  sessions      Session[]
+  wallet        Wallet?
+
+  @@map("users")
+}
+
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  familyId   String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Provider {
+  id          String          @id @default(uuid())
+  userId      String          @unique
+  status      ProviderStatus  @default(REGISTERED)
+  displayName String
+  stripeAccountId     String?         @unique
+  stripeAccountStatus StripeAccountStatus @default(PENDING)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  description String?
+  website     String?
+  assignments JobAssignment[]
+  machines    Machine[]
+  user        User            @relation(fields: [userId], references: [id])
+
+  @@map("providers")
+}
+
+model Machine {
+  id                String            @id @default(uuid())
+  providerId        String
+  name              String
+  status            MachineStatus     @default(REGISTERED)
+  hostname          String
+  operatingSystem   String
+  architecture      String
+  region            String
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  marketplaceStatus MarketplaceStatus @default(UNLISTED)
+  agentIdentity     AgentIdentity?
+  enrollmentToken   EnrollmentToken?
+  leases            ExecutionLease[]
+  assignments       JobAssignment[]
+  discovery         MachineDiscovery?
+  pricing           MachinePricing?
+  resource          MachineResource?
+  provider          Provider          @relation(fields: [providerId], references: [id])
+
+  @@index([providerId])
+  @@index([status])
+  @@index([marketplaceStatus, status])
+  @@map("machines")
+}
+
+model MachinePricing {
+  id                   String   @id @default(uuid())
+  machineId            String   @unique
+  flatCentsPerHour     Int      @default(0)
+  cpuCentsPerHour      Int      @default(0)
+  memoryGbCentsPerHour Int      @default(0)
+  gpuCentsPerHour      Int      @default(0)
+  currency             String   @default("USD")
+  minBillingMinutes    Int      @default(60)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  machine              Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@map("machine_pricing")
+}
+
+model MachineResource {
+  id          String   @id @default(uuid())
+  machineId   String   @unique
+  cpuCores    Int
+  memoryMb    Int
+  storageGb   Int
+  gpuCount    Int      @default(0)
+  gpuModel    String?
+  gpuMemoryMb Int?
+  cudaVersion String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  machine     Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@map("machine_resources")
+}
+
+model EnrollmentToken {
+  id        String    @id @default(uuid())
+  machineId String    @unique
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  machine   Machine   @relation(fields: [machineId], references: [id])
+
+  @@map("enrollment_tokens")
+}
+
+model AgentIdentity {
+  id              String      @id @default(uuid())
+  machineId       String      @unique
+  credentialHash  String
+  status          AgentStatus @default(ACTIVE)
+  agentVersion    String?
+  lastHeartbeatAt DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  machine         Machine     @relation(fields: [machineId], references: [id])
+
+  @@map("agent_identities")
+}
+
+model MachineDiscovery {
+  id                 String          @id @default(uuid())
+  machineId          String          @unique
+  cpuLogicalCores    Int?
+  cpuArchitecture    String?
+  memoryMb           Int?
+  operatingSystem    String?
+  gpuCount           Int?
+  gpuModel           String?
+  gpuMemoryMb        Int?
+  cudaVersion        String?
+  discoveryStatus    DiscoveryStatus @default(SUCCESS)
+  discoveryError     String?
+  gpuDiscoveryStatus DiscoveryStatus @default(SUCCESS)
+  discoveredAt       DateTime        @default(now())
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  machine            Machine         @relation(fields: [machineId], references: [id])
+
+  @@map("machine_discoveries")
+}
+
+model Job {
+  id                      String           @id @default(uuid())
+  userId                  String
+  name                    String
+  status                  JobStatus        @default(CREATED)
+  inputBucket             String?
+  inputKey                String?
+  inputSize               BigInt?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+  queuedAt                DateTime?
+  cancelledAt             DateTime?
+  completedAt             DateTime?
+  checkpointSequence      Int              @default(0)
+  recoveryAttempts        Int              @default(0)
+  quotedCurrency          String?
+  quotedPriceCentsPerHour Int?
+  billingSegments         BillingSegment[]
+  checkpoints             Checkpoint[]
+  leases                  ExecutionLease[]
+  assignments             JobAssignment[]
+  events                  JobEvent[]
+  requirement             JobRequirement?
+  user                    User             @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId, status, createdAt])
+  @@map("jobs")
+}
+
+model JobRequirement {
+  id                   String   @id @default(uuid())
+  jobId                String   @unique
+  cpuCoresMin          Int?
+  memoryMbMin          Int?
+  gpuRequired          Boolean  @default(false)
+  gpuCount             Int?
+  gpuModel             String?
+  gpuMemoryMbMin       Int?
+  cudaVersion          String?
+  architecture         String?
+  operatingSystem      String?
+  region               String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  maxPriceCentsPerHour Int?
+  targetMachineId      String?
+  job                  Job      @relation(fields: [jobId], references: [id])
+
+  @@map("job_requirements")
+}
+
+model JobEvent {
+  id         String         @id @default(uuid())
+  jobId      String
+  eventType  String
+  fromStatus JobStatus?
+  toStatus   JobStatus
+  actorType  EventActorType
+  actorId    String
+  metadata   Json?
+  createdAt  DateTime       @default(now())
+  job        Job            @relation(fields: [jobId], references: [id])
+
+  @@index([jobId, createdAt])
+  @@map("job_events")
+}
+
+model JobAssignment {
+  id             String           @id @default(uuid())
+  jobId          String
+  machineId      String
+  providerId     String
+  status         AssignmentStatus @default(ACTIVE)
+  assignedAt     DateTime         @default(now())
+  releasedAt     DateTime?
+  failureReason  String?
+  schedulerScore Float?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  outputBucket   String?
+  outputKey      String?
+  billingSegment BillingSegment?
+  checkpoints    Checkpoint[]
+  lease          ExecutionLease?
+  job            Job              @relation(fields: [jobId], references: [id])
+  machine        Machine          @relation(fields: [machineId], references: [id])
+  provider       Provider         @relation(fields: [providerId], references: [id])
+
+  @@index([jobId, status])
+  @@index([machineId, status])
+  @@map("job_assignments")
+}
+
+model ExecutionLease {
+  id            String        @id @default(uuid())
+  jobId         String
+  assignmentId  String        @unique
+  machineId     String
+  issuedAt      DateTime      @default(now())
+  expiresAt     DateTime
+  lastRenewedAt DateTime      @default(now())
+  status        LeaseStatus   @default(ACTIVE)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  checkpoints   Checkpoint[]
+  assignment    JobAssignment @relation(fields: [assignmentId], references: [id])
+  job           Job           @relation(fields: [jobId], references: [id])
+  machine       Machine       @relation(fields: [machineId], references: [id])
+
+  @@index([jobId])
+  @@index([expiresAt])
+  @@map("execution_leases")
+}
+
+model Checkpoint {
+  id               String           @id @default(uuid())
+  jobId            String
+  assignmentId     String
+  executionLeaseId String
+  sequence         Int
+  status           CheckpointStatus
+  bucket           String
+  storageKey       String
+  sizeBytes        BigInt
+  checksumSha256   String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  verifiedAt       DateTime?
+  metadata         Json?
+  failureReason    String?
+  assignment       JobAssignment    @relation(fields: [assignmentId], references: [id])
+  executionLease   ExecutionLease   @relation(fields: [executionLeaseId], references: [id])
+  job              Job              @relation(fields: [jobId], references: [id])
+
+  @@unique([jobId, sequence])
+  @@index([jobId, status, sequence(sort: Desc)])
+  @@index([assignmentId])
+  @@index([executionLeaseId])
+  @@map("checkpoints")
+}
+
+model SecurityEvent {
+  id        String            @id @default(uuid())
+  type      String
+  actorType SecurityActorType
+  actorId   String?
+  ipAddress String?
+  metadata  Json?
+  createdAt DateTime          @default(now())
+
+  @@index([type, createdAt])
+  @@index([actorId, createdAt])
+  @@map("security_events")
+}
+
+model Wallet {
+  id              String        @id @default(uuid())
+  userId          String?       @unique
+  type            WalletType
+  currency        String        @default("USD")
+  balance         BigInt        @default(0)
+  reservedBalance BigInt        @default(0)
+  version         Int           @default(0)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  ledgerEntries   LedgerEntry[]
+  user            User?         @relation(fields: [userId], references: [id])
+
+  @@map("wallets")
+}
+
+model FinancialTransaction {
+  id             String        @id @default(uuid())
+  type           TxType
+  status         TxStatus
+  idempotencyKey String        @unique
+  referenceId    String?
+  currency       String        @default("USD")
+  createdAt      DateTime      @default(now())
+  completedAt    DateTime?
+  entries        LedgerEntry[]
+
+  @@map("financial_transactions")
+}
+
+model LedgerEntry {
+  id            String               @id @default(uuid())
+  transactionId String
+  walletId      String
+  type          EntryType
+  amount        BigInt
+  createdAt     DateTime             @default(now())
+  transaction   FinancialTransaction @relation(fields: [transactionId], references: [id])
+  wallet        Wallet               @relation(fields: [walletId], references: [id])
+
+  @@index([transactionId])
+  @@index([walletId])
+  @@map("ledger_entries")
+}
+
+model BillingSegment {
+  id                   String        @id @default(uuid())
+  jobId                String
+  assignmentId         String        @unique
+  providerWalletId     String
+  status               SegmentStatus @default(ACTIVE)
+  actualDurationMs     BigInt?
+  billableDurationMs   BigInt?
+  billedAmount         BigInt?
+  providerEarning      BigInt?
+  flatCentsPerHour     Int
+  cpuCentsPerHour      Int
+  memoryGbCentsPerHour Int
+  gpuCentsPerHour      Int
+  requestedCpuCores    Int
+  requestedMemoryGb    Int
+  requestedGpuCount    Int
+  minBillingMinutes    Int
+  startedAt            DateTime      @default(now())
+  endedAt              DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  assignment           JobAssignment @relation(fields: [assignmentId], references: [id])
+  job                  Job           @relation(fields: [jobId], references: [id])
+
+  @@index([jobId])
+  @@map("billing_segments")
+}
+
+model Payout {
+  id               String       @id @default(uuid())
+  walletId         String
+  amount           BigInt
+  status           PayoutStatus
+  idempotencyKey   String       @unique
+  stripeTransferId String?      @unique
+  stripePayoutId   String?      @unique
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([walletId])
+  @@map("payouts")
 }
 
 enum UserRole {
@@ -30,39 +437,6 @@ enum UserStatus {
   DISABLED
 }
 
-model User {
-  id            String     @id @default(uuid())
-  email         String     @unique
-  passwordHash  String
-  role          UserRole   @default(CUSTOMER)
-  status        UserStatus @default(ACTIVE)
-  emailVerified Boolean    @default(false)
-  lastLoginAt   DateTime?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-  
-  sessions      Session[]
-  provider      Provider?
-  jobs          Job[]
-
-  @@map("users")
-}
-
-model Session {
-  id          String    @id @default(uuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash   String    @unique
-  familyId    String
-  expiresAt   DateTime
-  revokedAt   DateTime?
-  lastUsedAt  DateTime  @default(now())
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@map("sessions")
-}
-
 enum ProviderStatus {
   REGISTERED
   ACTIVE
@@ -70,18 +444,10 @@ enum ProviderStatus {
   DISABLED
 }
 
-model Provider {
-  id          String         @id @default(uuid())
-  userId      String         @unique
-  user        User           @relation(fields: [userId], references: [id])
-  status      ProviderStatus @default(REGISTERED)
-  displayName String
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  machines    Machine[]
-  assignments JobAssignment[]
-
-  @@map("providers")
+enum MarketplaceStatus {
+  UNLISTED
+  LISTED
+  PAUSED
 }
 
 enum MachineStatus {
@@ -93,77 +459,9 @@ enum MachineStatus {
   DISABLED
 }
 
-model Machine {
-  id              String           @id @default(uuid())
-  providerId      String
-  provider        Provider         @relation(fields: [providerId], references: [id])
-  name            String
-  status          MachineStatus    @default(REGISTERED)
-  hostname        String
-  operatingSystem String
-  architecture    String
-  region          String
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
-  resource        MachineResource?
-  enrollmentToken EnrollmentToken?
-  agentIdentity   AgentIdentity?
-  discovery       MachineDiscovery?
-  assignments     JobAssignment[]
-  leases          ExecutionLease[]
-
-  @@index([providerId])
-  @@index([status])
-  @@map("machines")
-}
-
-model MachineResource {
-  id          String   @id @default(uuid())
-  machineId   String   @unique
-  machine     Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
-  cpuCores    Int
-  memoryMb    Int
-  storageGb   Int
-  gpuCount    Int      @default(0)
-  gpuModel    String?
-  gpuMemoryMb Int?
-  cudaVersion String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("machine_resources")
-}
-
-model EnrollmentToken {
-  id         String   @id @default(uuid())
-  machineId  String   @unique
-  machine    Machine  @relation(fields: [machineId], references: [id])
-  tokenHash  String   @unique
-  expiresAt  DateTime
-  usedAt     DateTime?
-  createdAt  DateTime @default(now())
-
-  @@map("enrollment_tokens")
-}
-
 enum AgentStatus {
   ACTIVE
   REVOKED
-}
-
-model AgentIdentity {
-  id              String      @id @default(uuid())
-  machineId       String      @unique
-  machine         Machine     @relation(fields: [machineId], references: [id])
-  credentialHash  String
-  status          AgentStatus @default(ACTIVE)
-  agentVersion    String?
-  lastHeartbeatAt DateTime?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  @@map("agent_identities")
 }
 
 enum DiscoveryStatus {
@@ -171,28 +469,6 @@ enum DiscoveryStatus {
   PARTIAL
   FAILED
   UNAVAILABLE
-}
-
-model MachineDiscovery {
-  id                 String           @id @default(uuid())
-  machineId          String           @unique
-  machine            Machine          @relation(fields: [machineId], references: [id])
-  cpuLogicalCores    Int?
-  cpuArchitecture    String?
-  memoryMb           Int?
-  operatingSystem    String?
-  gpuCount           Int?             
-  gpuModel           String?
-  gpuMemoryMb        Int?
-  cudaVersion        String?
-  discoveryStatus    DiscoveryStatus  @default(SUCCESS)
-  discoveryError     String?          
-  gpuDiscoveryStatus DiscoveryStatus  @default(SUCCESS) 
-  discoveredAt       DateTime         @default(now())
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-
-  @@map("machine_discoveries")
 }
 
 enum JobStatus {
@@ -210,79 +486,11 @@ enum JobStatus {
   CANCELLED
 }
 
-model Job {
-  id          String         @id @default(uuid())
-  userId      String
-  user        User           @relation(fields: [userId], references: [id])
-  name        String
-  status      JobStatus      @default(CREATED)
-  checkpointSequence Int       @default(0)
-  recoveryAttempts Int       @default(0)
-  
-  inputBucket String?
-  inputKey    String?
-  inputSize   BigInt?        @db.BigInt
-  
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  queuedAt    DateTime?
-  cancelledAt DateTime?
-  completedAt DateTime?
-  
-  requirement JobRequirement?
-  events      JobEvent[]
-  assignments JobAssignment[]
-  leases      ExecutionLease[]
-  checkpoints Checkpoint[]
-
-  @@index([userId])
-  @@index([status])
-  @@index([createdAt])
-  @@index([userId, status, createdAt])
-  @@map("jobs")
-}
-
-model JobRequirement {
-  id              String   @id @default(uuid())
-  jobId           String   @unique
-  job             Job      @relation(fields: [jobId], references: [id])
-  cpuCoresMin     Int?
-  memoryMbMin     Int?
-  gpuRequired     Boolean  @default(false)
-  gpuCount        Int?
-  gpuModel        String?
-  gpuMemoryMbMin  Int?
-  cudaVersion     String?
-  architecture    String?
-  operatingSystem String?
-  region          String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@map("job_requirements")
-}
-
 enum EventActorType {
   USER
   SYSTEM
   AGENT
   ADMIN
-}
-
-model JobEvent {
-  id          String         @id @default(uuid())
-  jobId       String
-  job         Job            @relation(fields: [jobId], references: [id])
-  eventType   String
-  fromStatus  JobStatus?
-  toStatus    JobStatus
-  actorType   EventActorType
-  actorId     String
-  metadata    Json?
-  createdAt   DateTime       @default(now())
-
-  @@index([jobId, createdAt])
-  @@map("job_events")
 }
 
 enum AssignmentStatus {
@@ -292,62 +500,11 @@ enum AssignmentStatus {
   REJECTED
 }
 
-model JobAssignment {
-  id               String           @id @default(uuid())
-  jobId            String
-  job              Job              @relation(fields: [jobId], references: [id])
-  machineId        String
-  machine          Machine          @relation(fields: [machineId], references: [id])
-  providerId       String
-  provider         Provider         @relation(fields: [providerId], references: [id])
-  status           AssignmentStatus @default(ACTIVE)
-  assignedAt       DateTime         @default(now())
-  releasedAt       DateTime?
-  failureReason    String?
-  schedulerScore   Float?
-  outputBucket     String?
-  outputKey        String?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  
-  lease            ExecutionLease?
-  checkpoints      Checkpoint[]
-
-  @@index([jobId, status])
-  @@index([machineId, status])
-  @@map("job_assignments")
-}
-
 enum LeaseStatus {
   ACTIVE
   EXPIRED
   REVOKED
   CLOSED
-}
-
-model ExecutionLease {
-  id              String        @id @default(uuid())
-  jobId           String
-  assignmentId    String        @unique
-  machineId       String
-  
-  issuedAt        DateTime      @default(now())
-  expiresAt       DateTime
-  lastRenewedAt   DateTime      @default(now())
-  
-  status          LeaseStatus   @default(ACTIVE)
-  
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  
-  job             Job           @relation(fields: [jobId], references: [id], onDelete: Restrict)
-  assignment      JobAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
-  machine         Machine       @relation(fields: [machineId], references: [id], onDelete: Restrict)
-  checkpoints     Checkpoint[]
-
-  @@index([jobId])
-  @@index([expiresAt])
-  @@map("execution_leases")
 }
 
 enum CheckpointStatus {
@@ -359,32 +516,106 @@ enum CheckpointStatus {
   DELETED
 }
 
-model Checkpoint {
-  id                String           @id @default(uuid())
-  jobId             String
-  assignmentId      String
-  executionLeaseId  String
-  sequence          Int
-  status            CheckpointStatus
-  bucket            String
-  storageKey        String
-  sizeBytes         BigInt
-  checksumSha256    String
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  verifiedAt        DateTime?
-  metadata          Json?
-  failureReason     String?
+enum SecurityActorType {
+  USER
+  AGENT
+  ADMIN
+  SYSTEM
+  ANONYMOUS
+}
 
-  job               Job              @relation(fields: [jobId], references: [id])
-  assignment        JobAssignment    @relation(fields: [assignmentId], references: [id])
-  executionLease    ExecutionLease   @relation(fields: [executionLeaseId], references: [id])
+enum WalletType {
+  CUSTOMER
+  PROVIDER
+  SYSTEM
+}
 
-  @@unique([jobId, sequence])
-  @@index([jobId, status, sequence(sort: Desc)])
-  @@index([assignmentId])
-  @@index([executionLeaseId])
-  @@map("checkpoints")
+enum TxType {
+  DEPOSIT
+  RESERVATION
+  SETTLEMENT
+  REFUND
+  PAYOUT
+  PAYOUT_FAILURE
+}
+
+enum TxStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+enum SegmentStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+}
+
+enum PayoutStatus {
+  REQUESTED
+  RESERVED
+  SUBMITTED
+  PAID
+  FAILED
+  CANCELLED
 }
 
 
+enum PaymentStatus {
+  CREATED
+  REQUIRES_ACTION
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum PaymentEventStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+enum StripeAccountStatus {
+  PENDING
+  RESTRICTED
+  READY
+}
+
+model Payment {
+  id                    String        @id @default(uuid())
+  userId                String
+  walletId              String
+  stripePaymentIntentId String?       @unique
+  amount                BigInt
+  currency              String        @default("USD")
+  status                PaymentStatus @default(CREATED)
+  idempotencyKey        String        @unique
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([walletId])
+  @@map("payments")
+}
+
+model PaymentProviderEvent {
+  id            String             @id @default(uuid())
+  stripeEventId String             @unique
+  eventType     String
+  status        PaymentEventStatus @default(PENDING)
+  attemptCount  Int                @default(0)
+  receivedAt    DateTime           @default(now())
+  processedAt   DateTime?
+  failureReason String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@map("payment_provider_events")
+}

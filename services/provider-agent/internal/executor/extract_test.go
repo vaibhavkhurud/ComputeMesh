@@ -51,7 +51,7 @@ func TestSafeExtract(t *testing.T) {
 			destDir := filepath.Join(tmpDir, "dest")
 			os.Mkdir(destDir, 0755)
 
-			err := SafeExtract(archivePath, destDir)
+			err := SafeExtract(archivePath, destDir, "")
 			if err == nil {
 				t.Fatalf("expected error for %s, got nil", tt.name)
 			}
@@ -100,5 +100,39 @@ func TestArchiveExclude(t *testing.T) {
 	}
 	if !foundData {
 		t.Fatalf("expected data.txt to be in archive")
+	}
+}
+func TestSafeExtractChecksum(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "checksum-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	archivePath := filepath.Join(tmpDir, "archive.tar.gz")
+	f, _ := os.Create(archivePath)
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	tw.WriteHeader(&tar.Header{
+		Name: "test.txt",
+		Typeflag: tar.TypeReg,
+		Mode: 0600,
+		Size: 4,
+	})
+	tw.Write([]byte("test"))
+	tw.Close()
+	gw.Close()
+	f.Close()
+
+	destDir := filepath.Join(tmpDir, "dest")
+	os.Mkdir(destDir, 0755)
+
+	err := SafeExtract(archivePath, destDir, "invalidchecksum")
+	if err == nil {
+		t.Fatalf("expected error for invalid checksum, got nil")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("expected checksum mismatch error, got: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(destDir, "test.txt")); !os.IsNotExist(err) {
+		t.Fatalf("extraction occurred despite checksum mismatch")
 	}
 }
